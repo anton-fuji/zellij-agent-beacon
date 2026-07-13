@@ -1,0 +1,17 @@
+layout {
+    pane size=1 borderless=true {
+        plugin location="zellij:tab-bar"
+    }
+    pane split_direction="vertical" {
+        pane size="25%" {
+            // Copy this file to zellij.kdl and replace the location with your local absolute path.
+            // Example:
+            // plugin location="file:/Users/you/path/to/zellij-agent-beacon/target/wasm32-wasip1/debug/zellij-agent-beacon.wasm"
+            plugin location="file:/absolute/path/to/zellij-agent-beacon/target/wasm32-wasip1/debug/zellij-agent-beacon.wasm"
+        }
+        pane
+    }
+    pane size=1 borderless=true {
+        plugin location="zellij:status-bar"
+    }
+}
