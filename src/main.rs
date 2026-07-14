@@ -10,7 +10,7 @@ use agent::Agent;
 use detection::detect_agents;
 use ui::render_sidebar;
 
-const BUILD_LABEL: &str = "phase2-diagnostics";
+const BUILD_LABEL: &str = "phase3-navigation";
 
 #[derive(Default, Clone)]
 struct State {
@@ -20,6 +20,7 @@ struct State {
     exited_terminal_panes: BTreeSet<u32>,
     running_commands: BTreeMap<u32, String>,
     agents: Vec<Agent>,
+    selected_agent_index: Option<usize>,
     last_event: &'static str,
 }
 
@@ -80,8 +81,21 @@ impl ZellijPlugin for State {
                 true
             }
             Event::Key(key) => {
-                if matches!(key.bare_key, BareKey::Char('q')) && key.has_no_modifiers() {
+                if key.is_key_without_modifier(BareKey::Char('q')) {
                     close_self();
+                } else if key.is_key_without_modifier(BareKey::Char('j'))
+                    || key.is_key_without_modifier(BareKey::Down)
+                {
+                    self.select_next_agent();
+                    return true;
+                } else if key.is_key_without_modifier(BareKey::Char('k'))
+                    || key.is_key_without_modifier(BareKey::Up)
+                {
+                    self.select_previous_agent();
+                    return true;
+                } else if key.is_key_without_modifier(BareKey::Enter) {
+                    self.focus_selected_agent();
+                    return true;
                 }
                 false
             }
@@ -96,6 +110,7 @@ impl ZellijPlugin for State {
             cols,
             self.permissions_granted,
             &self.agents,
+            self.selected_agent_index,
             &diagnostics,
         ) {
             println!("{line}");
@@ -112,6 +127,7 @@ impl State {
             &self.exited_terminal_panes,
             &self.running_commands,
         );
+        self.clamp_selected_agent();
     }
 
     fn refresh_running_commands(&mut self) {
@@ -187,5 +203,94 @@ impl State {
         }
 
         lines
+    }
+
+    fn clamp_selected_agent(&mut self) {
+        self.selected_agent_index = match (self.selected_agent_index, self.agents.len()) {
+            (_, 0) => None,
+            (Some(index), len) if index < len => Some(index),
+            _ => Some(0),
+        };
+    }
+
+    fn select_next_agent(&mut self) {
+        self.selected_agent_index = next_index(self.selected_agent_index, self.agents.len());
+    }
+
+    fn select_previous_agent(&mut self) {
+        self.selected_agent_index = previous_index(self.selected_agent_index, self.agents.len());
+    }
+
+    fn focus_selected_agent(&mut self) {
+        let Some(agent) = self
+            .selected_agent_index
+            .and_then(|index| self.agents.get(index))
+        else {
+            self.last_event = "focus skipped: no agent";
+            return;
+        };
+
+        if agent.status != agent::AgentStatus::Running {
+            self.last_event = "focus skipped: agent unavailable";
+            return;
+        }
+
+        if !self.pane_exists(agent.pane_id) {
+            self.last_event = "focus skipped: pane missing";
+            self.refresh_agents();
+            return;
+        }
+
+        show_pane_with_id(agent.pane_id, true, true);
+        self.last_event = "focused agent pane";
+    }
+
+    fn pane_exists(&self, pane_id: PaneId) -> bool {
+        self.pane_manifest
+            .panes
+            .values()
+            .flat_map(|panes| panes.iter())
+            .any(|pane| match pane_id {
+                PaneId::Terminal(id) => !pane.is_plugin && pane.id == id && !pane.exited,
+                PaneId::Plugin(id) => pane.is_plugin && pane.id == id && !pane.exited,
+            })
+    }
+}
+
+fn next_index(current: Option<usize>, len: usize) -> Option<usize> {
+    match (current, len) {
+        (_, 0) => None,
+        (None, _) => Some(0),
+        (Some(index), len) => Some((index + 1) % len),
+    }
+}
+
+fn previous_index(current: Option<usize>, len: usize) -> Option<usize> {
+    match (current, len) {
+        (_, 0) => None,
+        (None, _) => Some(0),
+        (Some(0), len) => Some(len - 1),
+        (Some(index), _) => Some(index - 1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_index, previous_index};
+
+    #[test]
+    fn next_index_wraps_and_handles_empty_lists() {
+        assert_eq!(next_index(None, 0), None);
+        assert_eq!(next_index(None, 3), Some(0));
+        assert_eq!(next_index(Some(0), 3), Some(1));
+        assert_eq!(next_index(Some(2), 3), Some(0));
+    }
+
+    #[test]
+    fn previous_index_wraps_and_handles_empty_lists() {
+        assert_eq!(previous_index(None, 0), None);
+        assert_eq!(previous_index(None, 3), Some(0));
+        assert_eq!(previous_index(Some(2), 3), Some(1));
+        assert_eq!(previous_index(Some(0), 3), Some(2));
     }
 }

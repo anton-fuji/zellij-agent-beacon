@@ -5,6 +5,7 @@ pub fn render_sidebar(
     cols: usize,
     permissions_granted: bool,
     agents: &[Agent],
+    selected_agent_index: Option<usize>,
     diagnostics: &[String],
 ) -> Vec<String> {
     let width = cols.max(1);
@@ -24,12 +25,18 @@ pub fn render_sidebar(
         push_line(&mut lines, width, &format!("{} detected", agents.len()));
         push_line(&mut lines, width, "");
 
-        for agent in agents {
+        for (index, agent) in agents.iter().enumerate() {
+            let selector = if Some(index) == selected_agent_index {
+                ">"
+            } else {
+                " "
+            };
             push_line(
                 &mut lines,
                 width,
                 &format!(
-                    "{} {}",
+                    "{} {} {}",
+                    selector,
                     status_marker(agent.status),
                     agent.kind.display_name()
                 ),
@@ -76,7 +83,7 @@ mod tests {
 
     #[test]
     fn renders_empty_state() {
-        let lines = render_sidebar(3, 20, true, &[], &[]);
+        let lines = render_sidebar(3, 20, true, &[], None, &[]);
 
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].trim_end(), "AI Agents");
@@ -95,9 +102,37 @@ mod tests {
             command: Some("claude".to_owned()),
         };
 
-        let lines = render_sidebar(4, 10, true, &[agent], &[]);
+        let lines = render_sidebar(4, 10, true, &[agent], Some(0), &[]);
 
         assert_eq!(lines.len(), 4);
         assert!(lines.iter().all(|line| line.chars().count() == 10));
+    }
+
+    #[test]
+    fn marks_selected_agent() {
+        let agents = vec![
+            Agent {
+                kind: AgentKind::Codex,
+                status: AgentStatus::Running,
+                pane_id: PaneId::Terminal(1),
+                tab_position: 0,
+                tab_name: Some("one".to_owned()),
+                pane_title: Some("first".to_owned()),
+                command: Some("codex".to_owned()),
+            },
+            Agent {
+                kind: AgentKind::OpenCode,
+                status: AgentStatus::Running,
+                pane_id: PaneId::Terminal(2),
+                tab_position: 0,
+                tab_name: Some("two".to_owned()),
+                pane_title: Some("second".to_owned()),
+                command: Some("opencode".to_owned()),
+            },
+        ];
+
+        let lines = render_sidebar(10, 24, true, &agents, Some(1), &[]);
+
+        assert!(lines.iter().any(|line| line.trim_end() == "> * OpenCode"));
     }
 }
