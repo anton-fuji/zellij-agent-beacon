@@ -8,11 +8,11 @@ use zellij_tile::prelude::*;
 
 use agent::Agent;
 use detection::detect_agents;
-use ui::render_sidebar;
+use ui::{render_sidebar, SidebarMode, SidebarView};
 
-const BUILD_LABEL: &str = "phase3-navigation";
+const BUILD_LABEL: &str = "phase4-sidebar-ui";
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct State {
     permissions_granted: bool,
     tabs: Vec<TabInfo>,
@@ -21,7 +21,26 @@ struct State {
     running_commands: BTreeMap<u32, String>,
     agents: Vec<Agent>,
     selected_agent_index: Option<usize>,
+    sidebar_mode: SidebarMode,
+    show_diagnostics: bool,
     last_event: &'static str,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            permissions_granted: false,
+            tabs: Vec::new(),
+            pane_manifest: PaneManifest::default(),
+            exited_terminal_panes: BTreeSet::new(),
+            running_commands: BTreeMap::new(),
+            agents: Vec::new(),
+            selected_agent_index: None,
+            sidebar_mode: SidebarMode::Normal,
+            show_diagnostics: false,
+            last_event: "",
+        }
+    }
 }
 
 register_plugin!(State);
@@ -83,6 +102,17 @@ impl ZellijPlugin for State {
             Event::Key(key) => {
                 if key.is_key_without_modifier(BareKey::Char('q')) {
                     close_self();
+                } else if key.is_key_without_modifier(BareKey::Char('h')) {
+                    hide_self();
+                    return false;
+                } else if key.is_key_without_modifier(BareKey::Char('c')) {
+                    self.sidebar_mode = self.sidebar_mode.toggled();
+                    self.last_event = "sidebar mode toggled";
+                    return true;
+                } else if key.is_key_without_modifier(BareKey::Char('d')) {
+                    self.show_diagnostics = !self.show_diagnostics;
+                    self.last_event = "diagnostics toggled";
+                    return true;
                 } else if key.is_key_without_modifier(BareKey::Char('j'))
                     || key.is_key_without_modifier(BareKey::Down)
                 {
@@ -105,14 +135,16 @@ impl ZellijPlugin for State {
 
     fn render(&mut self, rows: usize, cols: usize) {
         let diagnostics = self.diagnostic_lines();
-        for line in render_sidebar(
-            rows,
-            cols,
-            self.permissions_granted,
-            &self.agents,
-            self.selected_agent_index,
-            &diagnostics,
-        ) {
+        let view = SidebarView {
+            permissions_granted: self.permissions_granted,
+            agents: &self.agents,
+            selected_agent_index: self.selected_agent_index,
+            mode: self.sidebar_mode,
+            show_diagnostics: self.show_diagnostics,
+            diagnostics: &diagnostics,
+        };
+
+        for line in render_sidebar(rows, cols, view) {
             println!("{line}");
         }
     }

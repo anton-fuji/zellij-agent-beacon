@@ -1,28 +1,60 @@
 use crate::agent::{Agent, AgentStatus};
 
-pub fn render_sidebar(
-    rows: usize,
-    cols: usize,
-    permissions_granted: bool,
-    agents: &[Agent],
-    selected_agent_index: Option<usize>,
-    diagnostics: &[String],
-) -> Vec<String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarMode {
+    Normal,
+    Compact,
+}
+
+impl SidebarMode {
+    pub fn toggled(self) -> Self {
+        match self {
+            SidebarMode::Normal => SidebarMode::Compact,
+            SidebarMode::Compact => SidebarMode::Normal,
+        }
+    }
+}
+
+pub struct SidebarView<'a> {
+    pub permissions_granted: bool,
+    pub agents: &'a [Agent],
+    pub selected_agent_index: Option<usize>,
+    pub mode: SidebarMode,
+    pub show_diagnostics: bool,
+    pub diagnostics: &'a [String],
+}
+
+pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<String> {
+    let SidebarView {
+        permissions_granted,
+        agents,
+        selected_agent_index,
+        mode,
+        show_diagnostics,
+        diagnostics,
+    } = view;
+
     let width = cols.max(1);
     let mut lines = Vec::with_capacity(rows.max(1));
+    let mode = if width < 24 {
+        SidebarMode::Compact
+    } else {
+        mode
+    };
 
-    push_line(&mut lines, width, "AI Agents");
+    push_line(&mut lines, width, &format!("AI Agents ({})", agents.len()));
 
     if !permissions_granted {
         push_line(&mut lines, width, "waiting for permissions");
     } else if agents.is_empty() {
         push_line(&mut lines, width, "no agents detected");
-        push_line(&mut lines, width, "");
-        for diagnostic in diagnostics {
-            push_line(&mut lines, width, diagnostic);
+        if show_diagnostics {
+            push_line(&mut lines, width, "");
+            for diagnostic in diagnostics {
+                push_line(&mut lines, width, diagnostic);
+            }
         }
     } else {
-        push_line(&mut lines, width, &format!("{} detected", agents.len()));
         push_line(&mut lines, width, "");
 
         for (index, agent) in agents.iter().enumerate() {
@@ -31,19 +63,42 @@ pub fn render_sidebar(
             } else {
                 " "
             };
-            push_line(
-                &mut lines,
-                width,
-                &format!(
-                    "{} {} {}",
-                    selector,
-                    status_marker(agent.status),
-                    agent.kind.display_name()
-                ),
-            );
-            push_line(&mut lines, width, &format!("  {}", agent.location_label()));
-            push_line(&mut lines, width, &format!("  {}", agent.status.label()));
+            match mode {
+                SidebarMode::Normal => {
+                    push_line(
+                        &mut lines,
+                        width,
+                        &format!(
+                            "{} {} {}",
+                            selector,
+                            status_marker(agent.status),
+                            agent.kind.display_name()
+                        ),
+                    );
+                    push_line(&mut lines, width, &format!("  {}", agent.location_label()));
+                    push_line(&mut lines, width, &format!("  {}", agent.status.label()));
+                    push_line(&mut lines, width, "");
+                }
+                SidebarMode::Compact => {
+                    push_line(
+                        &mut lines,
+                        width,
+                        &format!(
+                            "{}{} {}",
+                            selector,
+                            status_marker(agent.status),
+                            compact_agent_label(agent)
+                        ),
+                    );
+                }
+            }
+        }
+
+        if show_diagnostics {
             push_line(&mut lines, width, "");
+            for diagnostic in diagnostics {
+                push_line(&mut lines, width, diagnostic);
+            }
         }
     }
 
@@ -74,6 +129,16 @@ fn status_marker(status: AgentStatus) -> &'static str {
     }
 }
 
+fn compact_agent_label(agent: &Agent) -> String {
+    let tab = agent
+        .tab_name
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("tab");
+
+    format!("{} {}", agent.kind.display_name(), tab)
+}
+
 #[cfg(test)]
 mod tests {
     use zellij_tile::prelude::PaneId;
@@ -83,11 +148,37 @@ mod tests {
 
     #[test]
     fn renders_empty_state() {
-        let lines = render_sidebar(3, 20, true, &[], None, &[]);
+        let view = SidebarView {
+            permissions_granted: true,
+            agents: &[],
+            selected_agent_index: None,
+            mode: SidebarMode::Normal,
+            show_diagnostics: false,
+            diagnostics: &[],
+        };
+
+        let lines = render_sidebar(3, 20, view);
 
         assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0].trim_end(), "AI Agents");
+        assert_eq!(lines[0].trim_end(), "AI Agents (0)");
         assert_eq!(lines[1].trim_end(), "no agents detected");
+    }
+
+    #[test]
+    fn hides_diagnostics_by_default() {
+        let diagnostics = ["debug line".to_owned()];
+        let view = SidebarView {
+            permissions_granted: true,
+            agents: &[],
+            selected_agent_index: None,
+            mode: SidebarMode::Normal,
+            show_diagnostics: false,
+            diagnostics: &diagnostics,
+        };
+
+        let lines = render_sidebar(5, 24, view);
+
+        assert!(!lines.iter().any(|line| line.contains("debug line")));
     }
 
     #[test]
@@ -102,7 +193,17 @@ mod tests {
             command: Some("claude".to_owned()),
         };
 
-        let lines = render_sidebar(4, 10, true, &[agent], Some(0), &[]);
+        let agents = [agent];
+        let view = SidebarView {
+            permissions_granted: true,
+            agents: &agents,
+            selected_agent_index: Some(0),
+            mode: SidebarMode::Normal,
+            show_diagnostics: false,
+            diagnostics: &[],
+        };
+
+        let lines = render_sidebar(4, 10, view);
 
         assert_eq!(lines.len(), 4);
         assert!(lines.iter().all(|line| line.chars().count() == 10));
@@ -131,8 +232,44 @@ mod tests {
             },
         ];
 
-        let lines = render_sidebar(10, 24, true, &agents, Some(1), &[]);
+        let view = SidebarView {
+            permissions_granted: true,
+            agents: &agents,
+            selected_agent_index: Some(1),
+            mode: SidebarMode::Normal,
+            show_diagnostics: false,
+            diagnostics: &[],
+        };
+
+        let lines = render_sidebar(10, 24, view);
 
         assert!(lines.iter().any(|line| line.trim_end() == "> * OpenCode"));
+    }
+
+    #[test]
+    fn renders_compact_rows_when_requested() {
+        let agent = Agent {
+            kind: AgentKind::Codex,
+            status: AgentStatus::Running,
+            pane_id: PaneId::Terminal(1),
+            tab_position: 0,
+            tab_name: Some("api".to_owned()),
+            pane_title: Some("pane".to_owned()),
+            command: Some("codex".to_owned()),
+        };
+
+        let agents = [agent];
+        let view = SidebarView {
+            permissions_granted: true,
+            agents: &agents,
+            selected_agent_index: Some(0),
+            mode: SidebarMode::Compact,
+            show_diagnostics: false,
+            diagnostics: &[],
+        };
+
+        let lines = render_sidebar(4, 30, view);
+
+        assert!(lines.iter().any(|line| line.trim_end() == ">* Codex api"));
     }
 }
