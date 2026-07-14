@@ -64,6 +64,9 @@ fn detect_agent_in_pane(
         .get(&pane.id)
         .cloned()
         .or_else(|| pane.terminal_command.clone());
+    let has_command = command
+        .as_deref()
+        .is_some_and(|command| !command.trim().is_empty());
 
     let detection_source = command
         .as_deref()
@@ -72,9 +75,13 @@ fn detect_agent_in_pane(
 
     let kind = detect_agent_kind(detection_source)?;
     let pane_id = PaneId::Terminal(pane.id);
-    let status = if pane.exited || exited_terminal_panes.contains(&pane.id) {
+    let status = if pane.exited
+        || pane.is_held
+        || pane.exit_status.is_some()
+        || exited_terminal_panes.contains(&pane.id)
+    {
         AgentStatus::Exited
-    } else if command.is_some() || !pane.title.trim().is_empty() {
+    } else if has_command {
         AgentStatus::Running
     } else {
         AgentStatus::Unknown
@@ -83,6 +90,7 @@ fn detect_agent_in_pane(
     Some(Agent {
         kind,
         status,
+        exit_status: pane.exit_status,
         pane_id,
         tab_position,
         tab_name,
@@ -199,7 +207,26 @@ mod tests {
         .expect("agent should be detected");
 
         assert_eq!(agent.status, AgentStatus::Exited);
+        assert_eq!(agent.exit_status, None);
         assert_eq!(agent.pane_id, PaneId::Terminal(7));
+    }
+
+    #[test]
+    fn preserves_exit_status() {
+        let pane = PaneInfo {
+            id: 8,
+            title: "codex".to_owned(),
+            terminal_command: Some("codex".to_owned()),
+            exited: true,
+            exit_status: Some(1),
+            ..PaneInfo::default()
+        };
+
+        let agent = detect_agent_in_pane(&pane, 0, None, &BTreeSet::new(), &BTreeMap::new())
+            .expect("agent should be detected");
+
+        assert_eq!(agent.status, AgentStatus::Exited);
+        assert_eq!(agent.exit_status, Some(1));
     }
 
     #[test]
@@ -222,6 +249,22 @@ mod tests {
         .expect("agent should be detected from command override");
 
         assert_eq!(agent.kind, AgentKind::Codex);
+        assert_eq!(agent.status, AgentStatus::Running);
         assert_eq!(agent.command.as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn marks_title_only_detection_as_unknown() {
+        let pane = PaneInfo {
+            id: 10,
+            title: "codex".to_owned(),
+            terminal_command: None,
+            ..PaneInfo::default()
+        };
+
+        let agent = detect_agent_in_pane(&pane, 0, None, &BTreeSet::new(), &BTreeMap::new())
+            .expect("agent should be detected");
+
+        assert_eq!(agent.status, AgentStatus::Unknown);
     }
 }

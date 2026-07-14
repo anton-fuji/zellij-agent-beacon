@@ -20,6 +20,7 @@ pub struct SidebarView<'a> {
     pub agents: &'a [Agent],
     pub selected_agent_index: Option<usize>,
     pub mode: SidebarMode,
+    pub status_message: Option<&'a str>,
     pub show_diagnostics: bool,
     pub diagnostics: &'a [String],
 }
@@ -30,6 +31,7 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
         agents,
         selected_agent_index,
         mode,
+        status_message,
         show_diagnostics,
         diagnostics,
     } = view;
@@ -43,6 +45,9 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
     };
 
     push_line(&mut lines, width, &format!("AI Agents ({})", agents.len()));
+    if let Some(message) = status_message.filter(|message| !message.trim().is_empty()) {
+        push_line(&mut lines, width, message);
+    }
 
     if !permissions_granted {
         push_line(&mut lines, width, "waiting for permissions");
@@ -76,7 +81,7 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
                         ),
                     );
                     push_line(&mut lines, width, &format!("  {}", agent.location_label()));
-                    push_line(&mut lines, width, &format!("  {}", agent.status.label()));
+                    push_line(&mut lines, width, &format!("  {}", agent.status_label()));
                     push_line(&mut lines, width, "");
                 }
                 SidebarMode::Compact => {
@@ -153,6 +158,7 @@ mod tests {
             agents: &[],
             selected_agent_index: None,
             mode: SidebarMode::Normal,
+            status_message: None,
             show_diagnostics: false,
             diagnostics: &[],
         };
@@ -172,6 +178,7 @@ mod tests {
             agents: &[],
             selected_agent_index: None,
             mode: SidebarMode::Normal,
+            status_message: None,
             show_diagnostics: false,
             diagnostics: &diagnostics,
         };
@@ -186,6 +193,7 @@ mod tests {
         let agent = Agent {
             kind: AgentKind::ClaudeCode,
             status: AgentStatus::Running,
+            exit_status: None,
             pane_id: PaneId::Terminal(2),
             tab_position: 0,
             tab_name: Some("very-long-tab-name".to_owned()),
@@ -199,6 +207,7 @@ mod tests {
             agents: &agents,
             selected_agent_index: Some(0),
             mode: SidebarMode::Normal,
+            status_message: None,
             show_diagnostics: false,
             diagnostics: &[],
         };
@@ -215,6 +224,7 @@ mod tests {
             Agent {
                 kind: AgentKind::Codex,
                 status: AgentStatus::Running,
+                exit_status: None,
                 pane_id: PaneId::Terminal(1),
                 tab_position: 0,
                 tab_name: Some("one".to_owned()),
@@ -224,6 +234,7 @@ mod tests {
             Agent {
                 kind: AgentKind::OpenCode,
                 status: AgentStatus::Running,
+                exit_status: None,
                 pane_id: PaneId::Terminal(2),
                 tab_position: 0,
                 tab_name: Some("two".to_owned()),
@@ -237,6 +248,7 @@ mod tests {
             agents: &agents,
             selected_agent_index: Some(1),
             mode: SidebarMode::Normal,
+            status_message: None,
             show_diagnostics: false,
             diagnostics: &[],
         };
@@ -251,6 +263,7 @@ mod tests {
         let agent = Agent {
             kind: AgentKind::Codex,
             status: AgentStatus::Running,
+            exit_status: None,
             pane_id: PaneId::Terminal(1),
             tab_position: 0,
             tab_name: Some("api".to_owned()),
@@ -264,6 +277,7 @@ mod tests {
             agents: &agents,
             selected_agent_index: Some(0),
             mode: SidebarMode::Compact,
+            status_message: None,
             show_diagnostics: false,
             diagnostics: &[],
         };
@@ -271,5 +285,52 @@ mod tests {
         let lines = render_sidebar(4, 30, view);
 
         assert!(lines.iter().any(|line| line.trim_end() == ">* Codex api"));
+    }
+
+    #[test]
+    fn renders_focus_status_message() {
+        let view = SidebarView {
+            permissions_granted: true,
+            agents: &[],
+            selected_agent_index: None,
+            mode: SidebarMode::Normal,
+            status_message: Some("pane unavailable"),
+            show_diagnostics: false,
+            diagnostics: &[],
+        };
+
+        let lines = render_sidebar(4, 24, view);
+
+        assert!(lines
+            .iter()
+            .any(|line| line.trim_end() == "pane unavailable"));
+    }
+
+    #[test]
+    fn renders_exit_status_when_available() {
+        let agent = Agent {
+            kind: AgentKind::Codex,
+            status: AgentStatus::Exited,
+            exit_status: Some(1),
+            pane_id: PaneId::Terminal(1),
+            tab_position: 0,
+            tab_name: Some("api".to_owned()),
+            pane_title: Some("pane".to_owned()),
+            command: Some("codex".to_owned()),
+        };
+        let agents = [agent];
+        let view = SidebarView {
+            permissions_granted: true,
+            agents: &agents,
+            selected_agent_index: Some(0),
+            mode: SidebarMode::Normal,
+            status_message: None,
+            show_diagnostics: false,
+            diagnostics: &[],
+        };
+
+        let lines = render_sidebar(6, 30, view);
+
+        assert!(lines.iter().any(|line| line.trim_end() == "  Exited 1"));
     }
 }

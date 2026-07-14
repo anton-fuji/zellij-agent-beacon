@@ -40,6 +40,7 @@ impl AgentStatus {
 pub struct Agent {
     pub kind: AgentKind,
     pub status: AgentStatus,
+    pub exit_status: Option<i32>,
     pub pane_id: PaneId,
     pub tab_position: usize,
     pub tab_name: Option<String>,
@@ -48,6 +49,10 @@ pub struct Agent {
 }
 
 impl Agent {
+    pub fn is_focusable(&self) -> bool {
+        self.status == AgentStatus::Running
+    }
+
     pub fn location_label(&self) -> String {
         let tab = self
             .tab_name
@@ -63,6 +68,13 @@ impl Agent {
             .unwrap_or("untitled");
 
         format!("{tab} / {pane}")
+    }
+
+    pub fn status_label(&self) -> String {
+        match (self.status, self.exit_status) {
+            (AgentStatus::Exited, Some(exit_status)) => format!("Exited {exit_status}"),
+            _ => self.status.label().to_owned(),
+        }
     }
 }
 

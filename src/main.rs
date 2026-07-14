@@ -10,7 +10,7 @@ use agent::Agent;
 use detection::detect_agents;
 use ui::{render_sidebar, SidebarMode, SidebarView};
 
-const BUILD_LABEL: &str = "phase4-sidebar-ui";
+const BUILD_LABEL: &str = "phase5-status-handling";
 
 #[derive(Clone)]
 struct State {
@@ -22,6 +22,7 @@ struct State {
     agents: Vec<Agent>,
     selected_agent_index: Option<usize>,
     sidebar_mode: SidebarMode,
+    status_message: Option<String>,
     show_diagnostics: bool,
     last_event: &'static str,
 }
@@ -37,6 +38,7 @@ impl Default for State {
             agents: Vec::new(),
             selected_agent_index: None,
             sidebar_mode: SidebarMode::Normal,
+            status_message: None,
             show_diagnostics: false,
             last_event: "",
         }
@@ -140,6 +142,7 @@ impl ZellijPlugin for State {
             agents: &self.agents,
             selected_agent_index: self.selected_agent_index,
             mode: self.sidebar_mode,
+            status_message: self.status_message.as_deref(),
             show_diagnostics: self.show_diagnostics,
             diagnostics: &diagnostics,
         };
@@ -259,22 +262,27 @@ impl State {
             .and_then(|index| self.agents.get(index))
         else {
             self.last_event = "focus skipped: no agent";
+            self.status_message = Some("No agent selected".to_owned());
             return;
         };
 
-        if agent.status != agent::AgentStatus::Running {
+        if !agent.is_focusable() {
             self.last_event = "focus skipped: agent unavailable";
+            self.status_message = Some(format!("{} is {}", agent.kind, agent.status_label()));
             return;
         }
 
         if !self.pane_exists(agent.pane_id) {
             self.last_event = "focus skipped: pane missing";
+            self.status_message = Some("Agent pane is no longer available".to_owned());
             self.refresh_agents();
             return;
         }
 
+        let message = format!("Focused {}", agent.kind);
         show_pane_with_id(agent.pane_id, true, true);
         self.last_event = "focused agent pane";
+        self.status_message = Some(message);
     }
 
     fn pane_exists(&self, pane_id: PaneId) -> bool {
