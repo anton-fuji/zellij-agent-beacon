@@ -21,6 +21,7 @@ pub struct SidebarView<'a> {
     pub selected_agent_index: Option<usize>,
     pub mode: SidebarMode,
     pub status_message: Option<&'a str>,
+    pub show_help: bool,
     pub show_diagnostics: bool,
     pub diagnostics: &'a [String],
 }
@@ -32,6 +33,7 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
         selected_agent_index,
         mode,
         status_message,
+        show_help,
         show_diagnostics,
         diagnostics,
     } = view;
@@ -49,7 +51,9 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
         push_line(&mut lines, width, message);
     }
 
-    if !permissions_granted {
+    if show_help {
+        render_help(&mut lines, width, mode);
+    } else if !permissions_granted {
         push_line(&mut lines, width, "waiting for permissions");
     } else if agents.is_empty() {
         push_line(&mut lines, width, "no agents detected");
@@ -115,6 +119,29 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
     lines
 }
 
+fn render_help(lines: &mut Vec<String>, width: usize, mode: SidebarMode) {
+    push_line(lines, width, "");
+    push_line(lines, width, "Controls");
+    match mode {
+        SidebarMode::Normal => {
+            push_line(lines, width, "j/down next");
+            push_line(lines, width, "k/up previous");
+            push_line(lines, width, "enter focus");
+            push_line(lines, width, "q close");
+            push_line(lines, width, "c compact");
+            push_line(lines, width, "d diagnostics");
+            push_line(lines, width, "? help");
+        }
+        SidebarMode::Compact => {
+            push_line(lines, width, "j next");
+            push_line(lines, width, "k prev");
+            push_line(lines, width, "ent focus");
+            push_line(lines, width, "q close");
+            push_line(lines, width, "? help");
+        }
+    }
+}
+
 fn push_line(lines: &mut Vec<String>, width: usize, line: &str) {
     lines.push(fit_line(line, width));
 }
@@ -159,6 +186,7 @@ mod tests {
             selected_agent_index: None,
             mode: SidebarMode::Normal,
             status_message: None,
+            show_help: false,
             show_diagnostics: false,
             diagnostics: &[],
         };
@@ -179,6 +207,7 @@ mod tests {
             selected_agent_index: None,
             mode: SidebarMode::Normal,
             status_message: None,
+            show_help: false,
             show_diagnostics: false,
             diagnostics: &diagnostics,
         };
@@ -208,6 +237,7 @@ mod tests {
             selected_agent_index: Some(0),
             mode: SidebarMode::Normal,
             status_message: None,
+            show_help: false,
             show_diagnostics: false,
             diagnostics: &[],
         };
@@ -249,6 +279,7 @@ mod tests {
             selected_agent_index: Some(1),
             mode: SidebarMode::Normal,
             status_message: None,
+            show_help: false,
             show_diagnostics: false,
             diagnostics: &[],
         };
@@ -278,6 +309,7 @@ mod tests {
             selected_agent_index: Some(0),
             mode: SidebarMode::Compact,
             status_message: None,
+            show_help: false,
             show_diagnostics: false,
             diagnostics: &[],
         };
@@ -295,6 +327,7 @@ mod tests {
             selected_agent_index: None,
             mode: SidebarMode::Normal,
             status_message: Some("pane unavailable"),
+            show_help: false,
             show_diagnostics: false,
             diagnostics: &[],
         };
@@ -325,6 +358,7 @@ mod tests {
             selected_agent_index: Some(0),
             mode: SidebarMode::Normal,
             status_message: None,
+            show_help: false,
             show_diagnostics: false,
             diagnostics: &[],
         };
@@ -332,5 +366,24 @@ mod tests {
         let lines = render_sidebar(6, 30, view);
 
         assert!(lines.iter().any(|line| line.trim_end() == "  Exited 1"));
+    }
+
+    #[test]
+    fn renders_help_when_requested() {
+        let view = SidebarView {
+            permissions_granted: true,
+            agents: &[],
+            selected_agent_index: None,
+            mode: SidebarMode::Normal,
+            status_message: None,
+            show_help: true,
+            show_diagnostics: false,
+            diagnostics: &[],
+        };
+
+        let lines = render_sidebar(10, 24, view);
+
+        assert!(lines.iter().any(|line| line.trim_end() == "Controls"));
+        assert!(lines.iter().any(|line| line.trim_end() == "j/down next"));
     }
 }

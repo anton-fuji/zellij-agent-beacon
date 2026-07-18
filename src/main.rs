@@ -10,7 +10,19 @@ use agent::Agent;
 use detection::detect_agents;
 use ui::{render_sidebar, SidebarMode, SidebarView};
 
-const BUILD_LABEL: &str = "phase5-status-handling";
+const BUILD_LABEL: &str = "phase7-startup-stability";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Command {
+    Close,
+    Hide,
+    ToggleCompact,
+    ToggleDiagnostics,
+    ToggleHelp,
+    SelectNext,
+    SelectPrevious,
+    FocusSelected,
+}
 
 #[derive(Clone)]
 struct State {
@@ -19,11 +31,13 @@ struct State {
     pane_manifest: PaneManifest,
     exited_terminal_panes: BTreeSet<u32>,
     running_commands: BTreeMap<u32, String>,
+    enable_running_command_detection: bool,
     agents: Vec<Agent>,
     selected_agent_index: Option<usize>,
     sidebar_mode: SidebarMode,
     status_message: Option<String>,
     show_diagnostics: bool,
+    show_help: bool,
     last_event: &'static str,
 }
 
@@ -35,11 +49,13 @@ impl Default for State {
             pane_manifest: PaneManifest::default(),
             exited_terminal_panes: BTreeSet::new(),
             running_commands: BTreeMap::new(),
+            enable_running_command_detection: false,
             agents: Vec::new(),
             selected_agent_index: None,
             sidebar_mode: SidebarMode::Normal,
             status_message: None,
             show_diagnostics: false,
+            show_help: false,
             last_event: "",
         }
     }
@@ -48,7 +64,11 @@ impl Default for State {
 register_plugin!(State);
 
 impl ZellijPlugin for State {
-    fn load(&mut self, _configuration: BTreeMap<String, String>) {
+    fn load(&mut self, configuration: BTreeMap<String, String>) {
+        self.enable_running_command_detection = configuration
+            .get("running_command_detection")
+            .is_some_and(|value| is_truthy(value));
+
         subscribe(&[
             EventType::PermissionRequestResult,
             EventType::Key,
@@ -103,36 +123,46 @@ impl ZellijPlugin for State {
             }
             Event::Key(key) => {
                 if key.is_key_without_modifier(BareKey::Char('q')) {
-                    close_self();
+                    self.handle_command(Command::Close);
                 } else if key.is_key_without_modifier(BareKey::Char('h')) {
-                    hide_self();
-                    return false;
+                    self.handle_command(Command::Hide);
+                    return true;
                 } else if key.is_key_without_modifier(BareKey::Char('c')) {
-                    self.sidebar_mode = self.sidebar_mode.toggled();
-                    self.last_event = "sidebar mode toggled";
+                    self.handle_command(Command::ToggleCompact);
                     return true;
                 } else if key.is_key_without_modifier(BareKey::Char('d')) {
-                    self.show_diagnostics = !self.show_diagnostics;
-                    self.last_event = "diagnostics toggled";
+                    self.handle_command(Command::ToggleDiagnostics);
+                    return true;
+                } else if key.is_key_without_modifier(BareKey::Char('?')) {
+                    self.handle_command(Command::ToggleHelp);
                     return true;
                 } else if key.is_key_without_modifier(BareKey::Char('j'))
                     || key.is_key_without_modifier(BareKey::Down)
                 {
-                    self.select_next_agent();
+                    self.handle_command(Command::SelectNext);
                     return true;
                 } else if key.is_key_without_modifier(BareKey::Char('k'))
                     || key.is_key_without_modifier(BareKey::Up)
                 {
-                    self.select_previous_agent();
+                    self.handle_command(Command::SelectPrevious);
                     return true;
                 } else if key.is_key_without_modifier(BareKey::Enter) {
-                    self.focus_selected_agent();
+                    self.handle_command(Command::FocusSelected);
                     return true;
                 }
                 false
             }
             _ => false,
         }
+    }
+
+    fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
+        let Some(command) = command_from_pipe(&pipe_message) else {
+            return false;
+        };
+
+        self.handle_command(command);
+        true
     }
 
     fn render(&mut self, rows: usize, cols: usize) {
@@ -143,6 +173,7 @@ impl ZellijPlugin for State {
             selected_agent_index: self.selected_agent_index,
             mode: self.sidebar_mode,
             status_message: self.status_message.as_deref(),
+            show_help: self.show_help,
             show_diagnostics: self.show_diagnostics,
             diagnostics: &diagnostics,
         };
@@ -154,6 +185,44 @@ impl ZellijPlugin for State {
 }
 
 impl State {
+    fn handle_command(&mut self, command: Command) {
+        match command {
+            Command::Close => {
+                self.last_event = "close requested";
+                close_plugin();
+            }
+            Command::Hide => {
+                self.last_event = "hide requested";
+                hide_plugin();
+            }
+            Command::ToggleCompact => {
+                self.sidebar_mode = self.sidebar_mode.toggled();
+                self.last_event = "sidebar mode toggled";
+            }
+            Command::ToggleDiagnostics => {
+                self.show_diagnostics = !self.show_diagnostics;
+                self.last_event = "diagnostics toggled";
+            }
+            Command::ToggleHelp => {
+                self.show_help = !self.show_help;
+                self.last_event = "help toggled";
+            }
+            Command::SelectNext => {
+                self.select_next_agent();
+                self.last_event = "selected next agent";
+                self.status_message =
+                    selected_agent_message(self.selected_agent_index, &self.agents);
+            }
+            Command::SelectPrevious => {
+                self.select_previous_agent();
+                self.last_event = "selected previous agent";
+                self.status_message =
+                    selected_agent_message(self.selected_agent_index, &self.agents);
+            }
+            Command::FocusSelected => self.focus_selected_agent(),
+        }
+    }
+
     fn refresh_agents(&mut self) {
         self.refresh_running_commands();
         self.agents = detect_agents(
@@ -166,7 +235,9 @@ impl State {
     }
 
     fn refresh_running_commands(&mut self) {
-        if !self.permissions_granted {
+        self.running_commands.clear();
+
+        if !self.permissions_granted || !self.enable_running_command_detection {
             return;
         }
 
@@ -179,10 +250,8 @@ impl State {
             .map(|pane| pane.id)
             .collect::<Vec<_>>();
 
-        self.running_commands.clear();
-
         for pane_id in pane_ids {
-            let Ok(command_parts) = get_pane_running_command(PaneId::Terminal(pane_id)) else {
+            let Some(command_parts) = pane_running_command(PaneId::Terminal(pane_id)) else {
                 continue;
             };
             let command = command_parts.join(" ");
@@ -204,6 +273,14 @@ impl State {
             format!("last: {}", self.last_event),
             format!("tabs: {}", self.tabs.len()),
             format!("panes: {pane_count}"),
+            format!(
+                "run cmd: {}",
+                if self.enable_running_command_detection {
+                    "on"
+                } else {
+                    "off"
+                }
+            ),
         ];
 
         let mut tab_positions = self.pane_manifest.panes.keys().copied().collect::<Vec<_>>();
@@ -280,7 +357,7 @@ impl State {
         }
 
         let message = format!("Focused {}", agent.kind);
-        show_pane_with_id(agent.pane_id, true, true);
+        show_agent_pane(agent.pane_id);
         self.last_event = "focused agent pane";
         self.status_message = Some(message);
     }
@@ -314,9 +391,83 @@ fn previous_index(current: Option<usize>, len: usize) -> Option<usize> {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn close_plugin() {
+    close_self();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn close_plugin() {}
+
+#[cfg(target_arch = "wasm32")]
+fn hide_plugin() {
+    hide_self();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn hide_plugin() {}
+
+#[cfg(target_arch = "wasm32")]
+fn show_agent_pane(pane_id: PaneId) {
+    show_pane_with_id(pane_id, true, true);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn show_agent_pane(_pane_id: PaneId) {}
+
+#[cfg(target_arch = "wasm32")]
+fn pane_running_command(pane_id: PaneId) -> Option<Vec<String>> {
+    get_pane_running_command(pane_id).ok()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn pane_running_command(_pane_id: PaneId) -> Option<Vec<String>> {
+    None
+}
+
+fn command_from_pipe(pipe_message: &PipeMessage) -> Option<Command> {
+    if pipe_message.name != "zab" && pipe_message.name != "zellij-agent-beacon" {
+        return None;
+    }
+
+    let command = pipe_message
+        .payload
+        .as_deref()
+        .or_else(|| pipe_message.args.get("command").map(String::as_str))?
+        .trim();
+
+    match command {
+        "close" | "quit" => Some(Command::Close),
+        "hide" => Some(Command::Hide),
+        "compact" | "toggle-compact" => Some(Command::ToggleCompact),
+        "diagnostics" | "toggle-diagnostics" => Some(Command::ToggleDiagnostics),
+        "help" | "toggle-help" => Some(Command::ToggleHelp),
+        "next" | "down" => Some(Command::SelectNext),
+        "previous" | "prev" | "up" => Some(Command::SelectPrevious),
+        "focus" | "enter" => Some(Command::FocusSelected),
+        _ => None,
+    }
+}
+
+fn selected_agent_message(selected_agent_index: Option<usize>, agents: &[Agent]) -> Option<String> {
+    let agent = selected_agent_index.and_then(|index| agents.get(index))?;
+    Some(format!("Selected {}", agent.kind))
+}
+
+fn is_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{next_index, previous_index};
+    use std::collections::BTreeMap;
+
+    use zellij_tile::prelude::{PipeMessage, PipeSource};
+
+    use super::{command_from_pipe, is_truthy, next_index, previous_index, Command};
 
     #[test]
     fn next_index_wraps_and_handles_empty_lists() {
@@ -332,5 +483,68 @@ mod tests {
         assert_eq!(previous_index(None, 3), Some(0));
         assert_eq!(previous_index(Some(2), 3), Some(1));
         assert_eq!(previous_index(Some(0), 3), Some(2));
+    }
+
+    #[test]
+    fn parses_pipe_commands_from_payload() {
+        let message = PipeMessage {
+            source: PipeSource::Keybind,
+            name: "zab".to_owned(),
+            payload: Some("next".to_owned()),
+            args: BTreeMap::new(),
+            is_private: false,
+        };
+
+        assert_eq!(command_from_pipe(&message), Some(Command::SelectNext));
+    }
+
+    #[test]
+    fn ignores_unrelated_pipe_messages() {
+        let message = PipeMessage {
+            source: PipeSource::Keybind,
+            name: "other".to_owned(),
+            payload: Some("next".to_owned()),
+            args: BTreeMap::new(),
+            is_private: false,
+        };
+
+        assert_eq!(command_from_pipe(&message), None);
+    }
+
+    #[test]
+    fn parses_pipe_commands_from_args() {
+        let mut args = BTreeMap::new();
+        args.insert("command".to_owned(), "focus".to_owned());
+        let message = PipeMessage {
+            source: PipeSource::Keybind,
+            name: "zellij-agent-beacon".to_owned(),
+            payload: None,
+            args,
+            is_private: false,
+        };
+
+        assert_eq!(command_from_pipe(&message), Some(Command::FocusSelected));
+    }
+
+    #[test]
+    fn parses_help_pipe_command() {
+        let message = PipeMessage {
+            source: PipeSource::Keybind,
+            name: "zab".to_owned(),
+            payload: Some("help".to_owned()),
+            args: BTreeMap::new(),
+            is_private: false,
+        };
+
+        assert_eq!(command_from_pipe(&message), Some(Command::ToggleHelp));
+    }
+
+    #[test]
+    fn parses_truthy_config_values() {
+        assert!(is_truthy("true"));
+        assert!(is_truthy("on"));
+        assert!(is_truthy("1"));
+        assert!(!is_truthy("false"));
+        assert!(!is_truthy(""));
     }
 }
