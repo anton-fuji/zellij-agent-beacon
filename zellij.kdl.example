@@ -4,9 +4,8 @@ layout {
     }
     pane split_direction="vertical" {
         pane size="25%" {
-            // Copy this file to zellij.kdl and replace the location with your local absolute path.
-            // Example:
-            // plugin location="file:/Users/you/path/to/zellij-agent-beacon/target/wasm32-wasip1/debug/zellij-agent-beacon.wasm"
+            // Use an absolute file: URL for local development.
+            // `just init-layout` generates an ignored zellij.kdl with the correct path.
             plugin location="file:/absolute/path/to/zellij-agent-beacon/target/wasm32-wasip1/debug/zellij-agent-beacon.wasm"
         }
         pane

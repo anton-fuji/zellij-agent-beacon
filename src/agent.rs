@@ -50,7 +50,7 @@ pub struct Agent {
 
 impl Agent {
     pub fn is_focusable(&self) -> bool {
-        self.status == AgentStatus::Running
+        self.status != AgentStatus::Exited
     }
 
     pub fn location_label(&self) -> String {
@@ -81,5 +81,42 @@ impl Agent {
 impl fmt::Display for AgentKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.display_name())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allows_focus_for_detected_non_exited_agents() {
+        let agent = Agent {
+            kind: AgentKind::Codex,
+            status: AgentStatus::Unknown,
+            exit_status: None,
+            pane_id: PaneId::Terminal(1),
+            tab_position: 0,
+            tab_name: None,
+            pane_title: Some("codex".to_owned()),
+            command: Some("zsh".to_owned()),
+        };
+
+        assert!(agent.is_focusable());
+    }
+
+    #[test]
+    fn blocks_focus_for_exited_agents() {
+        let agent = Agent {
+            kind: AgentKind::Codex,
+            status: AgentStatus::Exited,
+            exit_status: Some(0),
+            pane_id: PaneId::Terminal(1),
+            tab_position: 0,
+            tab_name: None,
+            pane_title: Some("codex".to_owned()),
+            command: Some("codex".to_owned()),
+        };
+
+        assert!(!agent.is_focusable());
     }
 }

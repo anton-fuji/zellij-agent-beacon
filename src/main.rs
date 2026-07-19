@@ -10,7 +10,7 @@ use agent::Agent;
 use detection::detect_agents;
 use ui::{render_sidebar, SidebarMode, SidebarView};
 
-const BUILD_LABEL: &str = "phase7-startup-stability";
+const BUILD_LABEL: &str = "phase8-manual-scan";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Command {
@@ -19,6 +19,7 @@ enum Command {
     ToggleCompact,
     ToggleDiagnostics,
     ToggleHelp,
+    Refresh,
     SelectNext,
     SelectPrevious,
     FocusSelected,
@@ -53,7 +54,7 @@ impl Default for State {
             agents: Vec::new(),
             selected_agent_index: None,
             sidebar_mode: SidebarMode::Normal,
-            status_message: None,
+            status_message: Some("ready".to_owned()),
             show_diagnostics: false,
             show_help: false,
             last_event: "",
@@ -124,6 +125,7 @@ impl ZellijPlugin for State {
             Event::Key(key) => {
                 if key.is_key_without_modifier(BareKey::Char('q')) {
                     self.handle_command(Command::Close);
+                    return true;
                 } else if key.is_key_without_modifier(BareKey::Char('h')) {
                     self.handle_command(Command::Hide);
                     return true;
@@ -135,6 +137,9 @@ impl ZellijPlugin for State {
                     return true;
                 } else if key.is_key_without_modifier(BareKey::Char('?')) {
                     self.handle_command(Command::ToggleHelp);
+                    return true;
+                } else if key.is_key_without_modifier(BareKey::Char('r')) {
+                    self.handle_command(Command::Refresh);
                     return true;
                 } else if key.is_key_without_modifier(BareKey::Char('j'))
                     || key.is_key_without_modifier(BareKey::Down)
@@ -207,6 +212,18 @@ impl State {
                 self.show_help = !self.show_help;
                 self.last_event = "help toggled";
             }
+            Command::Refresh => {
+                let scanned_panes = self.refresh_running_commands(true);
+                self.agents = detect_agents(
+                    &self.pane_manifest,
+                    &self.tabs,
+                    &self.exited_terminal_panes,
+                    &self.running_commands,
+                );
+                self.clamp_selected_agent();
+                self.last_event = "manual refresh";
+                self.status_message = Some(format!("Scanned {scanned_panes} panes"));
+            }
             Command::SelectNext => {
                 self.select_next_agent();
                 self.last_event = "selected next agent";
@@ -224,7 +241,7 @@ impl State {
     }
 
     fn refresh_agents(&mut self) {
-        self.refresh_running_commands();
+        self.refresh_running_commands(false);
         self.agents = detect_agents(
             &self.pane_manifest,
             &self.tabs,
@@ -234,13 +251,12 @@ impl State {
         self.clamp_selected_agent();
     }
 
-    fn refresh_running_commands(&mut self) {
-        self.running_commands.clear();
-
-        if !self.permissions_granted || !self.enable_running_command_detection {
-            return;
+    fn refresh_running_commands(&mut self, force: bool) -> usize {
+        if !self.permissions_granted || (!self.enable_running_command_detection && !force) {
+            return 0;
         }
 
+        self.running_commands.clear();
         let pane_ids = self
             .pane_manifest
             .panes
@@ -250,6 +266,7 @@ impl State {
             .map(|pane| pane.id)
             .collect::<Vec<_>>();
 
+        let scanned_panes = pane_ids.len();
         for pane_id in pane_ids {
             let Some(command_parts) = pane_running_command(PaneId::Terminal(pane_id)) else {
                 continue;
@@ -259,6 +276,8 @@ impl State {
                 self.running_commands.insert(pane_id, command);
             }
         }
+
+        scanned_panes
     }
 
     fn diagnostic_lines(&self) -> Vec<String> {
@@ -442,6 +461,7 @@ fn command_from_pipe(pipe_message: &PipeMessage) -> Option<Command> {
         "compact" | "toggle-compact" => Some(Command::ToggleCompact),
         "diagnostics" | "toggle-diagnostics" => Some(Command::ToggleDiagnostics),
         "help" | "toggle-help" => Some(Command::ToggleHelp),
+        "refresh" | "scan" => Some(Command::Refresh),
         "next" | "down" => Some(Command::SelectNext),
         "previous" | "prev" | "up" => Some(Command::SelectPrevious),
         "focus" | "enter" => Some(Command::FocusSelected),
@@ -537,6 +557,19 @@ mod tests {
         };
 
         assert_eq!(command_from_pipe(&message), Some(Command::ToggleHelp));
+    }
+
+    #[test]
+    fn parses_refresh_pipe_command() {
+        let message = PipeMessage {
+            source: PipeSource::Keybind,
+            name: "zab".to_owned(),
+            payload: Some("refresh".to_owned()),
+            args: BTreeMap::new(),
+            is_private: false,
+        };
+
+        assert_eq!(command_from_pipe(&message), Some(Command::Refresh));
     }
 
     #[test]

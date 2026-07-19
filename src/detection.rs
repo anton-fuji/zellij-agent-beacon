@@ -68,12 +68,11 @@ fn detect_agent_in_pane(
         .as_deref()
         .is_some_and(|command| !command.trim().is_empty());
 
-    let detection_source = command
+    let (kind, detected_from_command) = command
         .as_deref()
-        .filter(|command| !command.trim().is_empty())
-        .unwrap_or(&pane.title);
-
-    let kind = detect_agent_kind(detection_source)?;
+        .and_then(detect_agent_kind)
+        .map(|kind| (kind, true))
+        .or_else(|| detect_agent_kind(&pane.title).map(|kind| (kind, false)))?;
     let pane_id = PaneId::Terminal(pane.id);
     let status = if pane.exited
         || pane.is_held
@@ -81,7 +80,7 @@ fn detect_agent_in_pane(
         || exited_terminal_panes.contains(&pane.id)
     {
         AgentStatus::Exited
-    } else if has_command {
+    } else if has_command && detected_from_command {
         AgentStatus::Running
     } else {
         AgentStatus::Unknown
@@ -266,5 +265,22 @@ mod tests {
             .expect("agent should be detected");
 
         assert_eq!(agent.status, AgentStatus::Unknown);
+    }
+
+    #[test]
+    fn falls_back_to_title_when_terminal_command_is_not_an_agent() {
+        let pane = PaneInfo {
+            id: 11,
+            title: "codex".to_owned(),
+            terminal_command: Some("zsh".to_owned()),
+            ..PaneInfo::default()
+        };
+
+        let agent = detect_agent_in_pane(&pane, 0, None, &BTreeSet::new(), &BTreeMap::new())
+            .expect("agent should be detected from pane title");
+
+        assert_eq!(agent.kind, AgentKind::Codex);
+        assert_eq!(agent.status, AgentStatus::Unknown);
+        assert_eq!(agent.command.as_deref(), Some("zsh"));
     }
 }

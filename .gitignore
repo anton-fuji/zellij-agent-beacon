@@ -22,3 +22,6 @@ target
 
 # Local Zellij development layout. Use zellij.kdl.example as the committed template.
 zellij.kdl
+zellij.mock.kdl
+zellij.dev.kdl*
+.zellij-dev/

@@ -55,8 +55,11 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
         render_help(&mut lines, width, mode);
     } else if !permissions_granted {
         push_line(&mut lines, width, "waiting for permissions");
+        push_line(&mut lines, width, "grant plugin access");
     } else if agents.is_empty() {
         push_line(&mut lines, width, "no agents detected");
+        push_line(&mut lines, width, "start codex/claude");
+        push_line(&mut lines, width, "or run mock session");
         if show_diagnostics {
             push_line(&mut lines, width, "");
             for diagnostic in diagnostics {
@@ -128,6 +131,7 @@ fn render_help(lines: &mut Vec<String>, width: usize, mode: SidebarMode) {
             push_line(lines, width, "k/up previous");
             push_line(lines, width, "enter focus");
             push_line(lines, width, "q close");
+            push_line(lines, width, "r refresh");
             push_line(lines, width, "c compact");
             push_line(lines, width, "d diagnostics");
             push_line(lines, width, "? help");
@@ -137,6 +141,7 @@ fn render_help(lines: &mut Vec<String>, width: usize, mode: SidebarMode) {
             push_line(lines, width, "k prev");
             push_line(lines, width, "ent focus");
             push_line(lines, width, "q close");
+            push_line(lines, width, "r scan");
             push_line(lines, width, "? help");
         }
     }
@@ -191,11 +196,13 @@ mod tests {
             diagnostics: &[],
         };
 
-        let lines = render_sidebar(3, 20, view);
+        let lines = render_sidebar(5, 20, view);
 
-        assert_eq!(lines.len(), 3);
+        assert_eq!(lines.len(), 5);
         assert_eq!(lines[0].trim_end(), "AI Agents (0)");
         assert_eq!(lines[1].trim_end(), "no agents detected");
+        assert_eq!(lines[2].trim_end(), "start codex/claude");
+        assert_eq!(lines[3].trim_end(), "or run mock session");
     }
 
     #[test]
