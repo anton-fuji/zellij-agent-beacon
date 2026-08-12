@@ -38,13 +38,41 @@ For a quick left-sidebar layout check in the current Zellij session:
 just dev-layout
 ```
 
-When run inside an existing Zellij session, this adds the layout as a new tab. It uses the keybindings already loaded by that session.
+When run inside an existing Zellij session, this adds the layout with `zellij action new-tab --layout`. If run from a normal terminal, it starts Zellij with that layout. If you are already working inside Zellij, use this instead of `just dev-session`.
 
-For interactive key testing, start a fresh development session:
+For the same check with a mock Codex pane:
 
 ```bash
-just dev-session
+just dev-layout-mock
 ```
+
+If the full layout path is unstable in your current session, use the smallest plugin-only check:
+
+```bash
+just dev-floating
+```
+
+This launches or focuses the plugin as a floating pane in the current Zellij session.
+
+For interactive key testing with the repository's isolated development keybinds,
+start a fresh local-config session:
+
+```bash
+just dev-session-local
+```
+
+Run this from a normal terminal, not from inside an existing Zellij session. The
+recipe refuses nested Zellij sessions because they can leave the screen blank or
+confuse terminal input modes.
+
+To test the plugin with your personal Zellij configuration instead, use:
+
+```bash
+just dev-session-personal
+```
+
+This explicitly reads `~/.config/zellij`. It does not load the repository's
+development keybinds, so only the keys configured in your personal config apply.
 
 This starts the plugin in the left sidebar with an empty shell on the right. The
 agent list will stay empty until `codex`, `claude`, or `opencode` is running in a
@@ -53,17 +81,23 @@ terminal pane.
 For UI-only testing without starting a real agent:
 
 ```bash
-just dev-session-mock
+just dev-session-local-mock
 ```
 
 This uses a generated `zellij.mock.kdl` layout whose right pane is named `codex`,
 so the sidebar should show one title-detected Codex entry immediately.
 
+Use your personal configuration with the same mock layout via:
+
+```bash
+just dev-session-personal-mock
+```
+
 This generates both local files:
 
 - `zellij.kdl`: left-sidebar layout with the local WASM path
 - `zellij.mock.kdl`: left-sidebar layout with a mock Codex pane for UI checks
-- `.zellij-dev/config.kdl`: development keybinds for `Ctrl p` pane mode
+- `.zellij-dev/config.kdl`: isolated development keybinds for `Ctrl p` pane mode
 
 To inspect or edit the generated layout without starting Zellij:
 
@@ -77,10 +111,85 @@ just init-dev-config
 
 Running-command detection through Zellij's `get_pane_running_command` API is disabled by default because it can time out during startup in some sessions. The MVP still detects agents from pane command/title metadata.
 
+## Personal Launch Key
+
+To launch or focus the plugin with a personal keybinding, generate a local snippet:
+
+```bash
+just init-launch-keybind
+```
+
+This writes `.zellij-dev/launch-keybind.kdl` with this default binding:
+
+```kdl
+shared_except "locked" {
+    bind "Alt a" {
+        LaunchOrFocusPlugin "file:/absolute/path/to/target/wasm32-wasip1/debug/zellij-agent-beacon.wasm" {
+            floating true
+            move_to_focused_tab true
+            skip_plugin_cache true
+        }
+        SwitchToMode "Normal"
+    }
+    bind "Alt ." {
+        MessagePlugin {
+            name "zab"
+            payload "next"
+        }
+    }
+    bind "Alt ," {
+        MessagePlugin {
+            name "zab"
+            payload "previous"
+        }
+    }
+    bind "Alt Enter" {
+        MessagePlugin {
+            name "zab"
+            payload "focus"
+        }
+        SwitchToMode "Normal"
+    }
+    bind "Alt r" {
+        MessagePlugin {
+            name "zab"
+            payload "refresh"
+        }
+    }
+    bind "Alt q" {
+        MessagePlugin {
+            name "zab"
+            payload "close"
+        }
+        SwitchToMode "Normal"
+    }
+    bind "Alt ?" {
+        MessagePlugin {
+            name "zab"
+            payload "help"
+        }
+    }
+}
+```
+
+`Alt a` is intentionally chosen because it is not used in the default keybindings checked for this project. Do not bind this to `Ctrl p`; that is Zellij's default pane mode prefix.
+
+For your personal Zellij config, copy the generated `shared_except "locked"` block into the existing `keybinds` block in `~/.config/zellij/config.kdl`. This launches the plugin as a floating pane. Use a layout such as `zellij.kdl.example` when you want it permanently embedded as a left sidebar.
+
+Personal key summary:
+
+- `Alt a`: launch or focus the plugin
+- `Alt .`: select next agent
+- `Alt ,`: select previous agent
+- `Alt Enter`: focus selected agent pane
+- `Alt r`: manually scan running pane commands
+- `Alt q`: close the plugin pane
+- `Alt ?`: toggle help
+
 ## Controls
 
-- `j` / Down: select next agent
-- `k` / Up: select previous agent
+- `j` / Down: select next available agent
+- `k` / Up: select previous available agent
 - Enter: focus the selected agent pane
 - `c`: toggle compact mode
 - `d`: toggle diagnostics
@@ -91,7 +200,9 @@ Running-command detection through Zellij's `get_pane_running_command` API is dis
 
 Direct controls only work when the plugin pane receives keyboard input. In Zellij `pane` mode, Zellij usually captures `j`, `k`, arrow keys, and `q` first.
 
-`just dev-session` starts Zellij with development keybinds that map `Ctrl p` pane mode to plugin commands:
+If you move focus to the plugin with `Ctrl p` and `h`/Left, you are still in Zellij `pane` mode. Press Enter or Esc to return to `normal` mode before using direct plugin keys, or use the personal `Alt` bindings above so focus and mode do not matter.
+
+`just dev-session-local` starts Zellij with development keybinds that map `Ctrl p` pane mode to plugin commands:
 
 - `Ctrl p`, then `j` / Down: select next agent
 - `Ctrl p`, then `k` / Up: select previous agent

@@ -54,7 +54,7 @@ impl Default for State {
             agents: Vec::new(),
             selected_agent_index: None,
             sidebar_mode: SidebarMode::Normal,
-            status_message: Some("ready".to_owned()),
+            status_message: None,
             show_diagnostics: false,
             show_help: false,
             last_event: "",
@@ -213,6 +213,7 @@ impl State {
                 self.last_event = "help toggled";
             }
             Command::Refresh => {
+                let selected_pane_id = self.selected_agent_pane_id();
                 let scanned_panes = self.refresh_running_commands(true);
                 self.agents = detect_agents(
                     &self.pane_manifest,
@@ -220,7 +221,7 @@ impl State {
                     &self.exited_terminal_panes,
                     &self.running_commands,
                 );
-                self.clamp_selected_agent();
+                self.restore_selected_agent(selected_pane_id);
                 self.last_event = "manual refresh";
                 self.status_message = Some(format!("Scanned {scanned_panes} panes"));
             }
@@ -241,6 +242,7 @@ impl State {
     }
 
     fn refresh_agents(&mut self) {
+        let selected_pane_id = self.selected_agent_pane_id();
         self.refresh_running_commands(false);
         self.agents = detect_agents(
             &self.pane_manifest,
@@ -248,7 +250,7 @@ impl State {
             &self.exited_terminal_panes,
             &self.running_commands,
         );
-        self.clamp_selected_agent();
+        self.restore_selected_agent(selected_pane_id);
     }
 
     fn refresh_running_commands(&mut self, force: bool) -> usize {
@@ -340,16 +342,32 @@ impl State {
         self.selected_agent_index = match (self.selected_agent_index, self.agents.len()) {
             (_, 0) => None,
             (Some(index), len) if index < len => Some(index),
-            _ => Some(0),
+            _ => first_focusable_index(&self.agents).or(Some(0)),
         };
     }
 
     fn select_next_agent(&mut self) {
-        self.selected_agent_index = next_index(self.selected_agent_index, self.agents.len());
+        self.selected_agent_index = next_focusable_index(self.selected_agent_index, &self.agents);
     }
 
     fn select_previous_agent(&mut self) {
-        self.selected_agent_index = previous_index(self.selected_agent_index, self.agents.len());
+        self.selected_agent_index =
+            previous_focusable_index(self.selected_agent_index, &self.agents);
+    }
+
+    fn selected_agent_pane_id(&self) -> Option<PaneId> {
+        self.selected_agent_index
+            .and_then(|index| self.agents.get(index))
+            .map(|agent| agent.pane_id)
+    }
+
+    fn restore_selected_agent(&mut self, selected_pane_id: Option<PaneId>) {
+        self.selected_agent_index = selected_pane_id.and_then(|pane_id| {
+            self.agents
+                .iter()
+                .position(|agent| agent.pane_id == pane_id)
+        });
+        self.clamp_selected_agent();
     }
 
     fn focus_selected_agent(&mut self) {
@@ -393,21 +411,38 @@ impl State {
     }
 }
 
-fn next_index(current: Option<usize>, len: usize) -> Option<usize> {
-    match (current, len) {
-        (_, 0) => None,
-        (None, _) => Some(0),
-        (Some(index), len) => Some((index + 1) % len),
-    }
+fn first_focusable_index(agents: &[Agent]) -> Option<usize> {
+    agents.iter().position(Agent::is_focusable)
 }
 
-fn previous_index(current: Option<usize>, len: usize) -> Option<usize> {
-    match (current, len) {
-        (_, 0) => None,
-        (None, _) => Some(0),
-        (Some(0), len) => Some(len - 1),
-        (Some(index), _) => Some(index - 1),
+fn next_focusable_index(current: Option<usize>, agents: &[Agent]) -> Option<usize> {
+    focusable_index_in_direction(current, agents, 1)
+}
+
+fn previous_focusable_index(current: Option<usize>, agents: &[Agent]) -> Option<usize> {
+    focusable_index_in_direction(current, agents, -1)
+}
+
+fn focusable_index_in_direction(
+    current: Option<usize>,
+    agents: &[Agent],
+    direction: isize,
+) -> Option<usize> {
+    let len = agents.len();
+    if len == 0 {
+        return None;
     }
+
+    let start = current.unwrap_or_else(|| if direction > 0 { len - 1 } else { 0 });
+    for offset in 1..=len {
+        let index = (start as isize + direction * offset as isize).rem_euclid(len as isize);
+        let index = index as usize;
+        if agents[index].is_focusable() {
+            return Some(index);
+        }
+    }
+
+    current.filter(|&index| index < len).or(Some(0))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -485,24 +520,52 @@ fn is_truthy(value: &str) -> bool {
 mod tests {
     use std::collections::BTreeMap;
 
-    use zellij_tile::prelude::{PipeMessage, PipeSource};
+    use zellij_tile::prelude::{PaneId, PipeMessage, PipeSource};
 
-    use super::{command_from_pipe, is_truthy, next_index, previous_index, Command};
+    use super::{
+        command_from_pipe, is_truthy, next_focusable_index, previous_focusable_index, Command,
+    };
+    use crate::agent::{Agent, AgentKind, AgentStatus};
 
-    #[test]
-    fn next_index_wraps_and_handles_empty_lists() {
-        assert_eq!(next_index(None, 0), None);
-        assert_eq!(next_index(None, 3), Some(0));
-        assert_eq!(next_index(Some(0), 3), Some(1));
-        assert_eq!(next_index(Some(2), 3), Some(0));
+    fn agent(status: AgentStatus) -> Agent {
+        Agent {
+            kind: AgentKind::Codex,
+            status,
+            exit_status: None,
+            pane_id: PaneId::Terminal(1),
+            tab_position: 0,
+            tab_name: None,
+            pane_title: None,
+            command: None,
+        }
     }
 
     #[test]
-    fn previous_index_wraps_and_handles_empty_lists() {
-        assert_eq!(previous_index(None, 0), None);
-        assert_eq!(previous_index(None, 3), Some(0));
-        assert_eq!(previous_index(Some(2), 3), Some(1));
-        assert_eq!(previous_index(Some(0), 3), Some(2));
+    fn next_selection_skips_exited_agents_and_wraps() {
+        let agents = [
+            agent(AgentStatus::Running),
+            agent(AgentStatus::Exited),
+            agent(AgentStatus::Unknown),
+        ];
+
+        assert_eq!(next_focusable_index(None, &[]), None);
+        assert_eq!(next_focusable_index(None, &agents), Some(0));
+        assert_eq!(next_focusable_index(Some(0), &agents), Some(2));
+        assert_eq!(next_focusable_index(Some(2), &agents), Some(0));
+    }
+
+    #[test]
+    fn previous_selection_skips_exited_agents_and_wraps() {
+        let agents = [
+            agent(AgentStatus::Running),
+            agent(AgentStatus::Exited),
+            agent(AgentStatus::Unknown),
+        ];
+
+        assert_eq!(previous_focusable_index(None, &[]), None);
+        assert_eq!(previous_focusable_index(None, &agents), Some(2));
+        assert_eq!(previous_focusable_index(Some(2), &agents), Some(0));
+        assert_eq!(previous_focusable_index(Some(0), &agents), Some(2));
     }
 
     #[test]

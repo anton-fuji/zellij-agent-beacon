@@ -46,7 +46,11 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
         mode
     };
 
-    push_line(&mut lines, width, &format!("AI Agents ({})", agents.len()));
+    push_line(
+        &mut lines,
+        width,
+        &agent_count_label(agents.len(), selected_agent_index),
+    );
     if let Some(message) = status_message.filter(|message| !message.trim().is_empty()) {
         push_line(&mut lines, width, message);
     }
@@ -58,8 +62,8 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
         push_line(&mut lines, width, "grant plugin access");
     } else if agents.is_empty() {
         push_line(&mut lines, width, "no agents detected");
-        push_line(&mut lines, width, "start codex/claude");
-        push_line(&mut lines, width, "or run mock session");
+        push_line(&mut lines, width, "start codex, claude, or opencode");
+        push_line(&mut lines, width, "press r to scan panes");
         if show_diagnostics {
             push_line(&mut lines, width, "");
             for diagnostic in diagnostics {
@@ -67,9 +71,26 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
             }
         }
     } else {
-        push_line(&mut lines, width, "");
+        let row_height = match mode {
+            SidebarMode::Normal => 3,
+            SidebarMode::Compact => 1,
+        };
+        let diagnostic_rows = if show_diagnostics {
+            1 + diagnostics.len()
+        } else {
+            0
+        };
+        let available_rows = rows.saturating_sub(lines.len().saturating_add(diagnostic_rows));
+        let visible_count = available_rows / row_height;
+        let (visible_start, visible_end) =
+            visible_agent_range(agents.len(), selected_agent_index, visible_count);
 
-        for (index, agent) in agents.iter().enumerate() {
+        for (index, agent) in agents
+            .iter()
+            .enumerate()
+            .skip(visible_start)
+            .take(visible_end.saturating_sub(visible_start))
+        {
             let selector = if Some(index) == selected_agent_index {
                 ">"
             } else {
@@ -89,7 +110,6 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
                     );
                     push_line(&mut lines, width, &format!("  {}", agent.location_label()));
                     push_line(&mut lines, width, &format!("  {}", agent.status_label()));
-                    push_line(&mut lines, width, "");
                 }
                 SidebarMode::Compact => {
                     push_line(
@@ -120,6 +140,32 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
 
     lines.truncate(rows);
     lines
+}
+
+fn agent_count_label(agent_count: usize, selected_agent_index: Option<usize>) -> String {
+    match selected_agent_index.filter(|&index| index < agent_count) {
+        Some(index) => format!("AI Agents ({agent_count}) [{}/{}]", index + 1, agent_count),
+        None => format!("AI Agents ({agent_count})"),
+    }
+}
+
+fn visible_agent_range(
+    agent_count: usize,
+    selected_agent_index: Option<usize>,
+    visible_count: usize,
+) -> (usize, usize) {
+    if agent_count == 0 || visible_count == 0 || visible_count >= agent_count {
+        return (0, agent_count.min(visible_count));
+    }
+
+    let selected = selected_agent_index
+        .filter(|&index| index < agent_count)
+        .unwrap_or(0);
+    let maximum_start = agent_count - visible_count;
+    let start = selected
+        .saturating_sub(visible_count / 2)
+        .min(maximum_start);
+    (start, start + visible_count)
 }
 
 fn render_help(lines: &mut Vec<String>, width: usize, mode: SidebarMode) {
@@ -201,8 +247,8 @@ mod tests {
         assert_eq!(lines.len(), 5);
         assert_eq!(lines[0].trim_end(), "AI Agents (0)");
         assert_eq!(lines[1].trim_end(), "no agents detected");
-        assert_eq!(lines[2].trim_end(), "start codex/claude");
-        assert_eq!(lines[3].trim_end(), "or run mock session");
+        assert_eq!(lines[2].trim_end(), "start codex, claude,");
+        assert_eq!(lines[3].trim_end(), "press r to scan pane");
     }
 
     #[test]
@@ -392,5 +438,46 @@ mod tests {
 
         assert!(lines.iter().any(|line| line.trim_end() == "Controls"));
         assert!(lines.iter().any(|line| line.trim_end() == "j/down next"));
+    }
+
+    #[test]
+    fn keeps_the_selected_agent_visible_in_a_short_sidebar() {
+        let agents = (1..=4)
+            .map(|id| Agent {
+                kind: AgentKind::Codex,
+                status: AgentStatus::Running,
+                exit_status: None,
+                pane_id: PaneId::Terminal(id),
+                tab_position: 0,
+                tab_name: Some(format!("tab-{id}")),
+                pane_title: Some(format!("pane-{id}")),
+                command: Some("codex".to_owned()),
+            })
+            .collect::<Vec<_>>();
+        let view = SidebarView {
+            permissions_granted: true,
+            agents: &agents,
+            selected_agent_index: Some(3),
+            mode: SidebarMode::Normal,
+            status_message: None,
+            show_help: false,
+            show_diagnostics: false,
+            diagnostics: &[],
+        };
+
+        let lines = render_sidebar(4, 30, view);
+
+        assert_eq!(lines[0].trim_end(), "AI Agents (4) [4/4]");
+        assert!(lines.iter().any(|line| line.trim_end() == "> * Codex"));
+        assert!(lines.iter().any(|line| line.contains("tab-4 / pane-4")));
+        assert!(!lines.iter().any(|line| line.contains("tab-1 / pane-1")));
+    }
+
+    #[test]
+    fn calculates_a_visible_range_around_the_selection() {
+        assert_eq!(visible_agent_range(4, Some(3), 1), (3, 4));
+        assert_eq!(visible_agent_range(5, Some(2), 3), (1, 4));
+        assert_eq!(visible_agent_range(4, None, 2), (0, 2));
+        assert_eq!(visible_agent_range(4, Some(1), 0), (0, 0));
     }
 }

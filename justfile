@@ -2,6 +2,7 @@ set dotenv-load := false
 
 target := "wasm32-wasip1"
 sidebar_width := "25%"
+launch_key := "Alt a"
 
 default:
     @just --list
@@ -28,6 +29,9 @@ build-wasm:
     cargo build --release --target {{target}}
 
 verify: fmt-check clippy test build-wasm
+
+_assert-outside-zellij:
+    @if [ -n "$ZELLIJ" ]; then printf '%s\n' "Refusing to start a nested Zellij session." "Inside Zellij, use 'just dev-layout' or 'just dev-layout-mock'." "From a normal terminal, use a dev-session-local or dev-session-personal recipe."; exit 1; fi
 
 dev-plugin:
     cargo build --target {{target}}
@@ -132,14 +136,90 @@ init-dev-config:
         > .zellij-dev/config.kdl
     @echo "Wrote .zellij-dev/config.kdl"
 
-dev-layout: dev-wasm init-layout
-    zellij --layout zellij.kdl
+init-launch-keybind:
+    @mkdir -p .zellij-dev
+    @printf '%s\n' \
+        'keybinds {' \
+        '    shared_except "locked" {' \
+        '        bind "{{launch_key}}" {' \
+        '            LaunchOrFocusPlugin "file:{{justfile_directory()}}/target/{{target}}/debug/zellij-agent-beacon.wasm" {' \
+        '                floating true' \
+        '                move_to_focused_tab true' \
+        '                skip_plugin_cache true' \
+        '            }' \
+        '            SwitchToMode "Normal"' \
+        '        }' \
+        '        bind "Alt ." {' \
+        '            MessagePlugin {' \
+        '                name "zab"' \
+        '                payload "next"' \
+        '            }' \
+        '        }' \
+        '        bind "Alt ," {' \
+        '            MessagePlugin {' \
+        '                name "zab"' \
+        '                payload "previous"' \
+        '            }' \
+        '        }' \
+        '        bind "Alt Enter" {' \
+        '            MessagePlugin {' \
+        '                name "zab"' \
+        '                payload "focus"' \
+        '            }' \
+        '            SwitchToMode "Normal"' \
+        '        }' \
+        '        bind "Alt r" {' \
+        '            MessagePlugin {' \
+        '                name "zab"' \
+        '                payload "refresh"' \
+        '            }' \
+        '        }' \
+        '        bind "Alt q" {' \
+        '            MessagePlugin {' \
+        '                name "zab"' \
+        '                payload "close"' \
+        '            }' \
+        '            SwitchToMode "Normal"' \
+        '        }' \
+        '        bind "Alt ?" {' \
+        '            MessagePlugin {' \
+        '                name "zab"' \
+        '                payload "help"' \
+        '            }' \
+        '        }' \
+        '    }' \
+        '}' \
+        > .zellij-dev/launch-keybind.kdl
+    @echo "Wrote .zellij-dev/launch-keybind.kdl"
 
-dev-session: dev-wasm init-layout init-dev-config
+dev-layout: dev-wasm init-layout
+    @if [ -n "$ZELLIJ" ]; then zellij action new-tab --layout zellij.kdl --name zab-dev; else zellij --layout zellij.kdl; fi
+
+dev-session-local: _assert-outside-zellij dev-wasm init-layout init-dev-config
     zellij --config-dir .zellij-dev -n zellij.kdl
 
-dev-session-mock: dev-wasm init-mock-layout init-dev-config
+dev-session-local-mock: _assert-outside-zellij dev-wasm init-mock-layout init-dev-config
     zellij --config-dir .zellij-dev -n zellij.mock.kdl
+
+dev-session-personal: _assert-outside-zellij dev-wasm init-layout
+    zellij --config-dir "$HOME/.config/zellij" -n zellij.kdl
+
+dev-session-personal-mock: _assert-outside-zellij dev-wasm init-mock-layout
+    zellij --config-dir "$HOME/.config/zellij" -n zellij.mock.kdl
+
+dev-session: dev-session-local
+
+dev-session-mock: dev-session-local-mock
+
+dev-layout-mock: dev-wasm init-mock-layout
+    @if [ -n "$ZELLIJ" ]; then zellij action new-tab --layout zellij.mock.kdl --name zab-dev-mock; else zellij --layout zellij.mock.kdl; fi
+
+dev-floating: dev-wasm
+    zellij action launch-or-focus-plugin --floating --move-to-focused-tab --skip-plugin-cache file:{{justfile_directory()}}/target/{{target}}/debug/zellij-agent-beacon.wasm
+
+dev-sesions: dev-session
+
+dev-sessions: dev-session
 
 zab-next:
     zellij action pipe --name zab -- next
