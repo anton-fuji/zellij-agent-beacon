@@ -223,7 +223,7 @@ impl State {
                 );
                 self.restore_selected_agent(selected_pane_id);
                 self.last_event = "manual refresh";
-                self.status_message = Some(format!("Scanned {scanned_panes} panes"));
+                self.status_message = Some(format!("Scan snapshot: {scanned_panes} panes"));
             }
             Command::SelectNext => {
                 self.select_next_agent();
@@ -393,7 +393,7 @@ impl State {
             return;
         }
 
-        let message = format!("Focused {}", agent.kind);
+        let message = format!("Focus requested for {}", agent.kind);
         show_agent_pane(agent.pane_id);
         self.last_event = "focused agent pane";
         self.status_message = Some(message);

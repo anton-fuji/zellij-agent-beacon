@@ -63,7 +63,7 @@ pub fn render_sidebar(rows: usize, cols: usize, view: SidebarView<'_>) -> Vec<St
     } else if agents.is_empty() {
         push_line(&mut lines, width, "no agents detected");
         push_line(&mut lines, width, "start codex, claude, or opencode");
-        push_line(&mut lines, width, "press r to scan panes");
+        push_line(&mut lines, width, "press r for a command scan");
         if show_diagnostics {
             push_line(&mut lines, width, "");
             for diagnostic in diagnostics {
@@ -248,7 +248,7 @@ mod tests {
         assert_eq!(lines[0].trim_end(), "AI Agents (0)");
         assert_eq!(lines[1].trim_end(), "no agents detected");
         assert_eq!(lines[2].trim_end(), "start codex, claude,");
-        assert_eq!(lines[3].trim_end(), "press r to scan pane");
+        assert_eq!(lines[3].trim_end(), "press r for a comman");
     }
 
     #[test]

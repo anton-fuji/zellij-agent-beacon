@@ -31,7 +31,7 @@ build-wasm:
 verify: fmt-check clippy test build-wasm
 
 _assert-outside-zellij:
-    @if [ -n "$ZELLIJ" ]; then printf '%s\n' "Refusing to start a nested Zellij session." "Inside Zellij, use 'just dev-layout' or 'just dev-layout-mock'." "From a normal terminal, use a dev-session-local or dev-session-personal recipe."; exit 1; fi
+    @if zellij action query-tab-names >/dev/null 2>&1; then printf '%s\n' "Refusing to start a nested Zellij session." "Inside Zellij, use 'just dev-layout' or 'just dev-layout-mock'." "From a normal terminal, use a dev-session-local or dev-session-personal recipe."; exit 1; fi
 
 dev-plugin:
     cargo build --target {{target}}

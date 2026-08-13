@@ -109,7 +109,7 @@ just init-dev-config
 
 `zellij.kdl`, `zellij.mock.kdl`, and `.zellij-dev/` are local-only and ignored by git. The committed layout template is `zellij.kdl.example`.
 
-Running-command detection through Zellij's `get_pane_running_command` API is disabled by default because it can time out during startup in some sessions. The MVP still detects agents from pane command/title metadata.
+Running-command detection through Zellij's `get_pane_running_command` API is disabled by default because it can time out during startup in some sessions. The MVP still detects agents from pane command/title metadata. Pressing `r` creates a command-detection snapshot; press it again after an agent starts, exits, or changes command, because the snapshot can become stale.
 
 ## Personal Launch Key
 
@@ -190,7 +190,7 @@ Personal key summary:
 
 - `j` / Down: select next available agent
 - `k` / Up: select previous available agent
-- Enter: focus the selected agent pane
+- Enter: request focus for the selected agent pane
 - `c`: toggle compact mode
 - `d`: toggle diagnostics
 - `h`: hide the plugin pane
